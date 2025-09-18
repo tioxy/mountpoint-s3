@@ -485,14 +485,25 @@ where
     }
 
     pub async fn mkdir(&self, parent: InodeNo, name: &OsStr, _mode: libc::mode_t, _umask: u32) -> Result<Entry, Error> {
-        let lookup = self.metablock.create(parent, name, InodeKind::Directory).await?;
-        let ttl = lookup.validity();
-        let attr = self.make_attr(&lookup.into());
-        Ok(Entry {
-            ttl,
-            attr,
-            generation: 0,
-        })
+        match self.metablock.create(parent, name, InodeKind::Directory).await {
+            Ok(lookup) => {
+                let ttl = lookup.validity();
+                let attr = self.make_attr(&lookup.into());
+                Ok(Entry {
+                    ttl,
+                    attr,
+                    generation: 0,
+                })
+            }
+            Err(InodeError::FileAlreadyExists(_)) => {
+                match self.lookup(parent, name).await {
+                    Ok(entry) if entry.attr.kind == fuser::FileType::Directory => Ok(entry),
+                    Ok(_) => Err(err!(libc::EEXIST, "file exists and is not a directory")),
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     #[allow(clippy::too_many_arguments)] // We don't get to choose this interface
